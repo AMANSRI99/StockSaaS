@@ -56,6 +56,7 @@ func main() {
 	{
 		basketGroup.POST("", basketHandler.CreateBasket)
 		basketGroup.GET("", basketHandler.ListBaskets)
+		basketGroup.GET("/:id", basketHandler.GetBasketByID)
 	}
 
 	e.GET("/", func(c echo.Context) error {

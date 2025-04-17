@@ -19,7 +19,7 @@ import (
 type BasketService interface {
 	CreateBasket(ctx context.Context, name string, stocks []model.Stock) (*model.Basket, error)
 	ListAllBaskets(ctx context.Context) ([]model.Basket, error)
-	// GetBasketByID(ctx context.Context, id uuid.UUID) (*model.Basket, error) // For later
+	GetBasketByID(ctx context.Context, id uuid.UUID) (*model.Basket, error) // For later
 }
 
 // --- Implementation ---
@@ -97,19 +97,17 @@ func (s *basketService) ListAllBaskets(ctx context.Context) ([]model.Basket, err
 	return baskets, nil
 }
 
-/*
 // GetBasketByID retrieves a single basket. (Example for later)
 func (s *basketService) GetBasketByID(ctx context.Context, id uuid.UUID) (*model.Basket, error) {
-    log.Printf("Service: Attempting to find basket by ID %s", id)
-    basket, err := s.repo.FindByID(ctx, id)
-    if err != nil {
-        log.Printf("Service: Error finding basket ID %s: %v", id, err)
-        if err == repository.ErrBasketNotFound { // Handle specific repo errors
-             return nil, err // Or return a service-specific NotFoundError
-        }
-        return nil, fmt.Errorf("failed to retrieve basket %s: %w", id, err)
-    }
-    log.Printf("Service: Found basket ID %s", id)
-    return basket, nil
+	log.Printf("Service: Attempting to find basket by ID %s", id)
+	basket, err := s.repo.FindByID(ctx, id)
+	if err != nil {
+		log.Printf("Service: Error finding basket ID %s: %v", id, err)
+		if err == repository.ErrBasketNotFound { // Handle specific repo errors
+			return nil, err // Or return a service-specific NotFoundError
+		}
+		return nil, fmt.Errorf("failed to retrieve basket %s: %w", id, err)
+	}
+	log.Printf("Service: Found basket ID %s", id)
+	return basket, nil
 }
-*/

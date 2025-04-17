@@ -24,6 +24,9 @@ type BasketRepository interface {
 	FindAll(ctx context.Context) ([]model.Basket, error)
 
 	// FindByID retrieves a single basket by its ID.
-	// We'll implement the handler for this later.
 	FindByID(ctx context.Context, id uuid.UUID) (*model.Basket, error)
+
+	DeleteByID(ctx context.Context, id uuid.UUID) error
+
+	Update(ctx context.Context, basket *model.Basket) error
 }

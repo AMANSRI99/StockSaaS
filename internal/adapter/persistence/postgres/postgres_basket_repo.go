@@ -174,3 +174,102 @@ func (r *PostgresBasketRepo) FindByID(ctx context.Context, id uuid.UUID) (*model
 
 	return &b, nil
 }
+
+// DeleteByID removes a basket from the database by its ID.
+// It returns ErrBasketNotFound if no rows are affected.
+func (r *PostgresBasketRepo) DeleteByID(ctx context.Context, id uuid.UUID) error {
+	query := `DELETE FROM baskets WHERE id = $1`
+
+	result, err := r.db.ExecContext(ctx, query, id)
+	if err != nil {
+		// Handle potential database errors (e.g., connection issues)
+		return fmt.Errorf("failed to execute delete for basket ID %s: %w", id, err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		// This might happen in rare cases, good to log
+		log.Printf("Warning: could not get rows affected after delete for basket ID %s: %v", id, err)
+		return fmt.Errorf("failed to check rows affected for basket ID %s: %w", id, err)
+	}
+
+	if rowsAffected == 0 {
+		// No rows were deleted, meaning the basket ID didn't exist
+		return repository.ErrBasketNotFound
+	}
+
+	// If rowsAffected is 1 (or potentially more if ID wasn't unique, but it's PK), success
+	return nil // Success
+}
+
+// Update modifies an existing basket and its items within a transaction.
+// It assumes basket.ID is set and basket contains the new Name and Stocks.
+// Returns ErrBasketNotFound if the basket ID doesn't exist.
+func (r *PostgresBasketRepo) Update(ctx context.Context, basket *model.Basket) (err error) { // Use named return for easier defer rollback
+	// Start transaction
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	// Defer rollback if any error occurs; commit otherwise
+	defer func() {
+		if p := recover(); p != nil { // Catch potential panics
+			log.Printf("Update recovered panic: %v", p)
+			rbErr := tx.Rollback()
+			if rbErr != nil {
+				log.Printf("Error rolling back transaction after panic: %v", rbErr)
+			}
+			// Re-panic if desired, or set error
+			err = fmt.Errorf("internal error during update (panic recovered)")
+		} else if err != nil {
+			// Explicit error occurred, rollback
+			log.Printf("Rolling back transaction for basket %s due to error: %v", basket.ID, err)
+			if rbErr := tx.Rollback(); rbErr != nil {
+				log.Printf("Error rolling back transaction: %v", rbErr)
+				// Combine errors? Or just log? Prioritize original error.
+				err = fmt.Errorf("original error: %w; rollback error: %v", err, rbErr)
+			}
+		} else {
+			// No error, commit
+			err = tx.Commit()
+			if err != nil {
+				err = fmt.Errorf("failed to commit transaction: %w", err)
+			}
+		}
+	}() // Execute the deferred function
+
+	// 1. Update the baskets table (name and updated_at via trigger)
+	// Note: We rely on the DB trigger to update `updated_at`.
+	updateBasketQuery := `UPDATE baskets SET name = $1 WHERE id = $2`
+	result, err := tx.ExecContext(ctx, updateBasketQuery, basket.Name, basket.ID)
+	if err != nil {
+		return fmt.Errorf("failed to update basket %s: %w", basket.ID, err)
+	}
+	rowsAffected, _ := result.RowsAffected() // Error checking for RowsAffected done previously
+	if rowsAffected == 0 {
+		return repository.ErrBasketNotFound // Basket ID didn't exist
+	}
+
+	// 2. Delete old items associated with this basket
+	deleteItemsQuery := `DELETE FROM basket_items WHERE basket_id = $1`
+	_, err = tx.ExecContext(ctx, deleteItemsQuery, basket.ID)
+	if err != nil {
+		return fmt.Errorf("failed to delete old items for basket %s: %w", basket.ID, err)
+	}
+
+	// 3. Insert new items
+	// Ensure basket.Stocks is not nil before ranging
+	if len(basket.Stocks) > 0 {
+		insertItemQuery := `INSERT INTO basket_items (basket_id, symbol, quantity) VALUES ($1, $2, $3)`
+		for _, stock := range basket.Stocks {
+			_, err = tx.ExecContext(ctx, insertItemQuery, basket.ID, stock.Symbol, stock.Quantity)
+			if err != nil {
+				// Handle potential errors like constraint violations
+				return fmt.Errorf("failed to insert new item %s for basket %s: %w", stock.Symbol, basket.ID, err)
+			}
+		}
+	} // else: if basket.Stocks is empty, we just deleted all old items, which is correct for PUT replace.
+
+	// If we reach here without error, the deferred function will commit.
+	return nil // Success (commit happens in defer)
+}

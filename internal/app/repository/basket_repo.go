@@ -6,6 +6,8 @@ import (
 
 	"context" // Use context for cancellation/deadlines
 	"errors"  // For defining custom errors
+
+	"github.com/google/uuid"
 )
 
 // ErrBasketNotFound is returned when a basket is not found.
@@ -23,5 +25,5 @@ type BasketRepository interface {
 
 	// FindByID retrieves a single basket by its ID.
 	// We'll implement the handler for this later.
-	// FindByID(ctx context.Context, id uuid.UUID) (*model.Basket, error)
+	FindByID(ctx context.Context, id uuid.UUID) (*model.Basket, error)
 }

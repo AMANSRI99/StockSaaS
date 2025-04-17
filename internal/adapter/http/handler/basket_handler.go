@@ -1,98 +1,75 @@
 package handler
 
 import (
-	"fmt"
-
+	// Use your actual module path
 	"github.com/AMANSRI99/StockSaaS/internal/app/model"
-	"github.com/AMANSRI99/StockSaaS/internal/app/repository"
+	// "github.com/AMANSRI99/StockSaaS/internal/app/repository" // No longer needed here
+	"github.com/AMANSRI99/StockSaaS/internal/app/service" // Import service interface
 
+	"fmt"
 	"log"
 	"net/http"
-	"time"
+	// "time" // No longer needed directly here
 
-	"github.com/google/uuid"
+	// "github.com/google/uuid" // No longer needed directly here
 	"github.com/labstack/echo/v4"
 )
 
-// BasketHandler holds dependencies for basket endpoints
+// BasketHandler now holds a service interface.
 type BasketHandler struct {
-	repo repository.BasketRepository
+	service service.BasketService // Use the service interface type
 }
 
-// NewBasketHandler creates a new handler instance (adjust map type)
-func NewBasketHandler(repo repository.BasketRepository) *BasketHandler {
+// NewBasketHandler accepts the service interface.
+func NewBasketHandler(svc service.BasketService) *BasketHandler {
 	return &BasketHandler{
-		repo: repo,
+		service: svc,
 	}
 }
 
-// CreateBasket handles POST requests to /baskets
+// CreateBasket handles POST requests - delegates to the service.
 func (h *BasketHandler) CreateBasket(c echo.Context) error {
-	// Use a struct for the request body to separate concerns slightly
+	// DTO (Data Transfer Object) for the request binding
 	type createBasketRequest struct {
 		Name   string        `json:"name"`
-		Stocks []model.Stock `json:"stocks"`
+		Stocks []model.Stock `json:"stocks"` // Keep using model.Stock for input for now
 	}
 
 	req := new(createBasketRequest)
-
-	// Bind the request body to the struct
 	if err := c.Bind(req); err != nil {
-		log.Printf("Error binding basket: %v", err)
-		// Use Echo's HTTPError for standard error responses
+		log.Printf("Handler: Error binding basket: %v", err)
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request body: "+err.Error())
 	}
 
-	// Basic validation (can use Echo's validator later)
-	if req.Name == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "Basket name is required")
-	}
-	if len(req.Stocks) == 0 {
-		return echo.NewHTTPError(http.StatusBadRequest, "Basket must contain at least one stock")
-	}
-	for i, stock := range req.Stocks {
-		if stock.Symbol == "" || stock.Quantity <= 0 {
-			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid data for stock #%d: symbol and positive quantity required", i+1))
-		}
-	}
-
-	// Create the new basket model
-	newBasket := model.Basket{
-		ID:        uuid.New(), // Generate UUID
-		Name:      req.Name,
-		Stocks:    req.Stocks,
-		CreatedAt: time.Now().UTC(),
-	}
-
-	//use the repository to save.
-	//Get context from requet.
+	// --- Delegate to the service ---
 	ctx := c.Request().Context()
-	err := h.repo.Save(ctx, &newBasket)
+	// Pass the relevant data from the request to the service method
+	createdBasket, err := h.service.CreateBasket(ctx, req.Name, req.Stocks)
 	if err != nil {
-		log.Printf("Error saving basket: %v", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "Could not save basket")
+		log.Printf("Handler: Error calling CreateBasket service: %v", err)
+		// Map service errors to HTTP errors (could be more sophisticated)
+		// For now, assume most service errors are internal server errors or bad requests if validation fails
+        // We might need specific error types from the service later.
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("Could not create basket: %v", err))
 	}
-	log.Printf("Created basket: ID=%s, Name=%s\n", newBasket.ID, newBasket.Name)
 
-	// Respond with the created basket using Echo's JSON helper
-	return c.JSON(http.StatusCreated, newBasket)
+	log.Printf("Handler: Successfully created basket ID %s via service", createdBasket.ID)
+	// Return the basket returned by the service
+	return c.JSON(http.StatusCreated, createdBasket)
 }
 
-// ListBaskets handles GET requests to /baskets
-// Signature now uses echo.Context and returns error
+// ListBaskets handles GET requests - delegates to the service.
 func (h *BasketHandler) ListBaskets(c echo.Context) error {
+	// --- Delegate to the service ---
 	ctx := c.Request().Context()
-	allBaskets, err := h.repo.FindAll(ctx)
-
+	allBaskets, err := h.service.ListAllBaskets(ctx)
 	if err != nil {
-		log.Printf("Error finding all the baskets: %v", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "could not retrieve baskets")
+		log.Printf("Handler: Error calling ListAllBaskets service: %v", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("Could not retrieve baskets: %v", err))
 	}
 
-	//if there are no baskets yet.
-	if allBaskets == nil {
-		allBaskets = []model.Basket{}
-	}
-	// Use Echo's JSON helper for the response
+    // Service ensures we get []model.Basket{}, not nil
+
+	log.Printf("Handler: Returning %d baskets from service", len(allBaskets))
 	return c.JSON(http.StatusOK, allBaskets)
 }

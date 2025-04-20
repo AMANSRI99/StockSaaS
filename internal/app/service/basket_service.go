@@ -19,11 +19,11 @@ import (
 
 // BasketService defines the interface for basket business logic operations.
 type BasketService interface {
-	CreateBasket(ctx context.Context, name string, stocks []model.Stock) (*model.Basket, error)
-	ListAllBaskets(ctx context.Context) ([]model.Basket, error)
-	GetBasketByID(ctx context.Context, id uuid.UUID) (*model.Basket, error)
-	DeleteBasketByID(ctx context.Context, id uuid.UUID) error
-	UpdateBasket(ctx context.Context, id uuid.UUID, name string, stocks []model.Stock) (*model.Basket, error)
+	CreateBasket(ctx context.Context, name string, stocks []model.Stock, userID uuid.UUID) (*model.Basket, error)
+	ListAllBaskets(ctx context.Context, userID uuid.UUID) ([]model.Basket, error)
+	GetBasketByID(ctx context.Context, id uuid.UUID, userID uuid.UUID) (*model.Basket, error)
+	DeleteBasketByID(ctx context.Context, id uuid.UUID, userID uuid.UUID) error
+	UpdateBasket(ctx context.Context, id uuid.UUID, name string, stocks []model.Stock, userID uuid.UUID) (*model.Basket, error)
 }
 
 // --- Implementation ---
@@ -43,7 +43,7 @@ func NewBasketService(repo repository.BasketRepository) BasketService {
 }
 
 // CreateBasket contains the business logic for creating a new basket.
-func (s *basketService) CreateBasket(ctx context.Context, name string, stocks []model.Stock) (*model.Basket, error) {
+func (s *basketService) CreateBasket(ctx context.Context, name string, stocks []model.Stock, userID uuid.UUID) (*model.Basket, error) {
 	// 1. Input Validation (Could be more extensive business rules here)
 	if name == "" {
 		return nil, fmt.Errorf("basket name cannot be empty") // Return specific errors if needed
@@ -68,8 +68,8 @@ func (s *basketService) CreateBasket(ctx context.Context, name string, stocks []
 	}
 
 	// 3. Persist using the repository
-	log.Printf("Service: Attempting to save basket ID %s", newBasket.ID)
-	err := s.repo.Save(ctx, &newBasket)
+	log.Printf("Service: Attempting to save basket ID %s for user %s", newBasket.ID, userID)
+	err := s.repo.Save(ctx, &newBasket, userID)
 	if err != nil {
 		log.Printf("Service: Error saving basket ID %s: %v", newBasket.ID, err)
 		// Don't expose raw repository errors directly? Maybe wrap them.
@@ -82,9 +82,9 @@ func (s *basketService) CreateBasket(ctx context.Context, name string, stocks []
 }
 
 // ListAllBaskets retrieves all baskets using the repository.
-func (s *basketService) ListAllBaskets(ctx context.Context) ([]model.Basket, error) {
+func (s *basketService) ListAllBaskets(ctx context.Context, userID uuid.UUID) ([]model.Basket, error) {
 	log.Printf("Service: Attempting to find all baskets")
-	baskets, err := s.repo.FindAll(ctx)
+	baskets, err := s.repo.FindAll(ctx, userID)
 	if err != nil {
 		log.Printf("Service: Error finding all baskets: %v", err)
 		return nil, fmt.Errorf("failed to retrieve baskets: %w", err) // Wrap error
@@ -102,47 +102,47 @@ func (s *basketService) ListAllBaskets(ctx context.Context) ([]model.Basket, err
 }
 
 // GetBasketByID retrieves a single basket. (Example for later)
-func (s *basketService) GetBasketByID(ctx context.Context, id uuid.UUID) (*model.Basket, error) {
-	log.Printf("Service: Attempting to find basket by ID %s", id)
-	basket, err := s.repo.FindByID(ctx, id)
+func (s *basketService) GetBasketByID(ctx context.Context, basketID uuid.UUID, userID uuid.UUID) (*model.Basket, error) {
+	log.Printf("Service: Attempting to find basket by ID %s for user %s", basketID, userID)
+	basket, err := s.repo.FindByID(ctx, basketID, userID)
 	if err != nil {
-		log.Printf("Service: Error finding basket ID %s: %v", id, err)
+		log.Printf("Service: Error finding basket ID %s: %v", basketID, err)
 		if err == repository.ErrBasketNotFound { // Handle specific repo errors
 			return nil, err // Or return a service-specific NotFoundError
 		}
-		return nil, fmt.Errorf("failed to retrieve basket %s: %w", id, err)
+		return nil, fmt.Errorf("failed to retrieve basket %s: %w", basketID, err)
 	}
-	log.Printf("Service: Found basket ID %s", id)
+	log.Printf("Service: Found basket ID %s", basketID)
 	return basket, nil
 }
 
 // DeleteBasketByID handles the business logic for deleting a basket.
-func (s *basketService) DeleteBasketByID(ctx context.Context, id uuid.UUID) error {
-	log.Printf("Service: Attempting to delete basket by ID %s", id)
+func (s *basketService) DeleteBasketByID(ctx context.Context, basketID uuid.UUID, userID uuid.UUID) error {
+	log.Printf("Service: Attempting to delete basket by ID %s", basketID)
 
 	// Optional: You might want to check if it exists first using FindByID,
 	// but the repository DeleteByID check for RowsAffected handles the NotFound case.
 	// Depending on requirements, you might add other business logic here
 	// before deletion (e.g., checking if the basket is 'active').
 
-	err := s.repo.DeleteByID(ctx, id) // Call the repository method
+	err := s.repo.DeleteByID(ctx, basketID, userID) // Call the repository method
 	if err != nil {
-		log.Printf("Service: Error deleting basket ID %s: %v", id, err)
+		log.Printf("Service: Attempting to delete basket by ID %s for user %s", basketID, userID)
 		// Passing up specific known errors like NotFound
 		if errors.Is(err, repository.ErrBasketNotFound) {
 			return err
 		}
 		// Wrap other errors
-		return fmt.Errorf("failed to delete basket %s: %w", id, err)
+		return fmt.Errorf("failed to delete basket %s: %w", basketID, err)
 	}
 
-	log.Printf("Service: Successfully deleted basket ID %s", id)
+	log.Printf("Service: Successfully deleted basket ID %s", basketID)
 	return nil // Success
 }
 
 // UpdateBasket handles the business logic for updating an existing basket.
-func (s *basketService) UpdateBasket(ctx context.Context, id uuid.UUID, name string, stocks []model.Stock) (*model.Basket, error) {
-	log.Printf("Service: Attempting to update basket ID %s", id)
+func (s *basketService) UpdateBasket(ctx context.Context, basketID uuid.UUID, name string, stocks []model.Stock, userID uuid.UUID) (*model.Basket, error) {
+	log.Printf("Service: Attempting to update basket ID %s for user %s", basketID, userID)
 
 	// 1. Input Validation
 	if name == "" {
@@ -158,39 +158,41 @@ func (s *basketService) UpdateBasket(ctx context.Context, id uuid.UUID, name str
 
 	// 2. Optional but recommended: Check if basket exists first using FindByID
 	// This retrieves CreatedAt and confirms existence before complex update.
-	existingBasket, err := s.repo.FindByID(ctx, id)
-	if err != nil {
-		log.Printf("Service: Basket %s not found for update: %v", id, err)
-		// Pass up NotFound or wrap other errors
-		return nil, err // Repo FindByID already wraps non-NotFound errors
-	}
+	// existingBasket, err := s.repo.FindByID(ctx, basketID, userID)
+	// if err != nil {
+	// 	log.Printf("Service: Basket %s not found for update: %v", basketID, err)
+	// 	// Pass up NotFound or wrap other errors
+	// 	return nil, err // Repo FindByID already wraps non-NotFound errors
+	// }
 
 	// 3. Prepare the updated model object
 	updatedBasket := model.Basket{
-		ID:        id,                       // Use the ID from the path parameter
-		Name:      name,                     // Use the new name
-		Stocks:    stocks,                   // Use the new list of stocks
-		CreatedAt: existingBasket.CreatedAt, // Preserve original creation time
+		ID:     basketID, // Use the ID from the path parameter
+		Name:   name,     // Use the new name
+		Stocks: stocks,   // Use the new list of stocks
+		//CreatedAt: existingBasket.CreatedAt, // Preserve original creation time
 		// UpdatedAt will be set by the database trigger via repo.Update
 	}
 
 	// 4. Call the repository to persist changes
-	err = s.repo.Update(ctx, &updatedBasket)
+	err := s.repo.Update(ctx, &updatedBasket, userID)
 	if err != nil {
-		log.Printf("Service: Error updating basket ID %s in repository: %v", id, err)
+		log.Printf("Service: Error updating basket ID %s in repository: %v", basketID, err)
 		// Pass up specific known errors like NotFound (though caught above ideally)
 		if errors.Is(err, repository.ErrBasketNotFound) {
 			return nil, err
 		}
 		// Wrap other errors
-		return nil, fmt.Errorf("failed to update basket %s: %w", id, err)
+		return nil, fmt.Errorf("failed to update basket %s: %w", basketID, err)
 	}
 
 	// 5. Return the updated basket representation
 	// Note: updatedBasket.UpdatedAt here won't reflect the trigger's change yet.
 	// If that's needed, uncomment the FindByID call below.
-	log.Printf("Service: Successfully updated basket ID %s (returning intended state)", id)
-	// Optionally, fetch again to get DB-generated UpdatedAt:
+	log.Printf("Service: Successfully updated basket ID %s (returning intended state)", basketID)
+
+	updatedBasket.CreatedAt = time.Time{} // Indicate we don't know the creation time here
+	updatedBasket.UpdatedAt = time.Time{} // Indicate we don't know the update time here
 	// return s.repo.FindByID(ctx, id)
 	return &updatedBasket, nil // Return the state we intended to save
 }

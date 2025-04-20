@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/AMANSRI99/StockSaaS/internal/adapter/http/handler"
+	httpMw "github.com/AMANSRI99/StockSaaS/internal/adapter/http/middleware"
 	"github.com/AMANSRI99/StockSaaS/internal/adapter/persistence/postgres"
 	"github.com/AMANSRI99/StockSaaS/internal/app/service"
 	"github.com/AMANSRI99/StockSaaS/internal/config"
@@ -12,17 +13,15 @@ import (
 	"log"
 
 	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
+	echoMw "github.com/labstack/echo/v4/middleware"
 )
 
 func main() {
-
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	//Setting up db connection
 	db, err := postgres.NewConnection(cfg.Database)
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
@@ -33,40 +32,52 @@ func main() {
 			log.Printf("Error closing database connection: %v", err)
 		}
 	}()
-	// --- Echo instance ---
+
 	e := echo.New()
+	e.Use(echoMw.Logger())
+	e.Use(echoMw.Recover())
 
-	// --- Middleware ---
-	e.Use(middleware.Logger())
-	e.Use(middleware.Recover())
-
-	// --- Initializing Dependencies (Repo -> Service -> Handler) ---
-
-	// 1. Repository
+	// --- Initialize Repositories ---
 	basketRepo := postgres.NewPostgresBasketRepo(db)
+	userRepo := postgres.NewPostgresUserRepo(db) // <-- Instantiate User Repo
 
-	// 2. Service (inject repository)
+	// --- Initialize Services ---
 	basketSvc := service.NewBasketService(basketRepo)
+	userSvc := service.NewUserService(userRepo, *cfg) // <-- Instantiate User Service (pass full config)
 
-	// 3. Handler (inject service)
-	basketHandler := handler.NewBasketHandler(basketSvc) // Pass service interface
+	// --- Initialize Handlers ---
+	basketHandler := handler.NewBasketHandler(basketSvc) // Pass basket service
+	authHandler := handler.NewAuthHandler(userSvc)       // <-- Instantiate Auth Handler
 
+	//Initialising auth middleware
+	authMiddleware := httpMw.NewJWTAuthMiddleware(cfg.JWT.SecretKey)
 	// --- Routes ---
-	basketGroup := e.Group("/baskets")
+	// Group API routes (good practice)
+	apiGroup := e.Group("/api")
 	{
-		basketGroup.POST("", basketHandler.CreateBasket)
-		basketGroup.GET("", basketHandler.ListBaskets)
-		basketGroup.GET("/:id", basketHandler.GetBasketByID)
-		basketGroup.DELETE("/:id", basketHandler.DeleteBasketByID)
-		basketGroup.PUT("/:id", basketHandler.UpdateBasket)
+		// Auth routes (no auth middleware needed)
+		authGroup := apiGroup.Group("/auth")
+		{
+			authGroup.POST("/signup", authHandler.Signup) // <-- Register Signup Route
+			authGroup.POST("/login", authHandler.Login)
+		}
+
+		// Basket routes (will add auth middleware later)
+		basketGroup := apiGroup.Group("/baskets", authMiddleware)
+		{
+			basketGroup.POST("", basketHandler.CreateBasket)
+			basketGroup.GET("", basketHandler.ListBaskets)
+			basketGroup.GET("/:id", basketHandler.GetBasketByID)
+			basketGroup.DELETE("/:id", basketHandler.DeleteBasketByID)
+			basketGroup.PUT("/:id", basketHandler.UpdateBasket)
+		}
 	}
 
 	e.GET("/", func(c echo.Context) error {
 		return c.String(http.StatusOK, "Basket Trader API is running!")
 	})
 
-	// --- Start Server ---
-	port := ":8080"
-	log.Printf("Starting Echo server on port %s\n", port)
-	e.Logger.Fatal(e.Start(port))
+	serverPort := ":" + cfg.ServerPort
+	log.Printf("Starting Echo server on port %s\n", serverPort)
+	e.Logger.Fatal(e.Start(serverPort))
 }

@@ -16,8 +16,7 @@ import (
 	"net/http"
 
 	// "time" // No longer needed directly here
-
-	// "github.com/google/uuid" // No longer needed directly here
+	mw "github.com/AMANSRI99/StockSaaS/internal/adapter/http/middleware"
 	"github.com/labstack/echo/v4"
 )
 
@@ -33,8 +32,26 @@ func NewBasketHandler(svc service.BasketService) *BasketHandler {
 	}
 }
 
+// Helper function to get userID from context
+func getUserIDFromContext(c echo.Context) (uuid.UUID, error) {
+	userIDCtx := c.Get(string(mw.UserIDContextKey)) // Use the key defined in middleware
+	userID, ok := userIDCtx.(uuid.UUID)
+	if !ok {
+		log.Printf("Handler: Failed to get user ID from context or type assertion failed")
+		// This indicates a programming error (middleware not run or wrong type set)
+		return uuid.Nil, echo.NewHTTPError(http.StatusInternalServerError, "Could not identify user from context")
+	}
+	return userID, nil
+}
+
 // CreateBasket handles POST requests - delegates to the service.
 func (h *BasketHandler) CreateBasket(c echo.Context) error {
+
+	userID, err := getUserIDFromContext(c)
+	if err != nil {
+		return err
+	}
+
 	// DTO (Data Transfer Object) for the request binding
 	type createBasketRequest struct {
 		Name   string        `json:"name"`
@@ -49,8 +66,9 @@ func (h *BasketHandler) CreateBasket(c echo.Context) error {
 
 	// --- Delegate to the service ---
 	ctx := c.Request().Context()
-	// Pass the relevant data from the request to the service method
-	createdBasket, err := h.service.CreateBasket(ctx, req.Name, req.Stocks)
+	log.Printf("Handler: Calling CreateBasket service for user %s", userID)
+	// Pass userID to service
+	createdBasket, err := h.service.CreateBasket(ctx, req.Name, req.Stocks, userID)
 	if err != nil {
 		log.Printf("Handler: Error calling CreateBasket service: %v", err)
 		// Map service errors to HTTP errors (could be more sophisticated)
@@ -66,9 +84,17 @@ func (h *BasketHandler) CreateBasket(c echo.Context) error {
 
 // ListBaskets handles GET requests - delegates to the service.
 func (h *BasketHandler) ListBaskets(c echo.Context) error {
+
+	userID, err := getUserIDFromContext(c)
+	if err != nil {
+		return err
+	}
+
 	// --- Delegate to the service ---
 	ctx := c.Request().Context()
-	allBaskets, err := h.service.ListAllBaskets(ctx)
+	log.Printf("Handler: Calling ListAllBaskets service for user %s", userID)
+
+	allBaskets, err := h.service.ListAllBaskets(ctx, userID)
 	if err != nil {
 		log.Printf("Handler: Error calling ListAllBaskets service: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("Could not retrieve baskets: %v", err))
@@ -82,6 +108,10 @@ func (h *BasketHandler) ListBaskets(c echo.Context) error {
 
 // GetBasketByID handles GET requests to /baskets/:id
 func (h *BasketHandler) GetBasketByID(c echo.Context) error {
+	userID, err := getUserIDFromContext(c)
+	if err != nil {
+		return err
+	}
 	// 1. Parse and Validate ID from path parameter
 	idStr := c.Param("id")
 	basketID, err := uuid.Parse(idStr)
@@ -92,8 +122,8 @@ func (h *BasketHandler) GetBasketByID(c echo.Context) error {
 
 	// 2. Call the Service
 	ctx := c.Request().Context()
-	log.Printf("Handler: Calling GetBasketByID service for ID %s", basketID)
-	basket, err := h.service.GetBasketByID(ctx, basketID)
+	log.Printf("Handler: Calling GetBasketByID service for user %s, basket %s", userID, basketID)
+	basket, err := h.service.GetBasketByID(ctx, basketID, userID)
 	if err != nil {
 		log.Printf("Handler: Error from GetBasketByID service for ID %s: %v", basketID, err)
 		// 3. Handle specific errors (like NotFound)
@@ -111,6 +141,10 @@ func (h *BasketHandler) GetBasketByID(c echo.Context) error {
 
 // DeleteBasketByID handles DELETE requests to /baskets/:id
 func (h *BasketHandler) DeleteBasketByID(c echo.Context) error {
+	userID, err := getUserIDFromContext(c)
+	if err != nil {
+		return err
+	}
 	// 1. Parse and Validate ID from path parameter
 	idStr := c.Param("id")
 	basketID, err := uuid.Parse(idStr)
@@ -121,8 +155,11 @@ func (h *BasketHandler) DeleteBasketByID(c echo.Context) error {
 
 	// 2. Call the Service
 	ctx := c.Request().Context()
-	log.Printf("Handler: Calling DeleteBasketByID service for ID %s", basketID)
-	err = h.service.DeleteBasketByID(ctx, basketID) // No basket returned on delete
+	log.Printf("Handler: Calling DeleteBasketByID service for user %s, basket %s", userID, basketID)
+
+	err = h.service.DeleteBasketByID(ctx, basketID, userID)
+	log.Printf("Handler: Calling DeleteBasketByID service for user %s, basket %s", userID, basketID)
+	// No basket returned on delete
 	if err != nil {
 		log.Printf("Handler: Error from DeleteBasketByID service for ID %s: %v", basketID, err)
 		// 3. Handle specific errors (like NotFound)
@@ -140,6 +177,11 @@ func (h *BasketHandler) DeleteBasketByID(c echo.Context) error {
 
 // UpdateBasket handles PUT requests to /baskets/:id
 func (h *BasketHandler) UpdateBasket(c echo.Context) error {
+
+	userID, err := getUserIDFromContext(c)
+	if err != nil {
+		return err
+	}
 	// 1. Parse and Validate ID
 	idStr := c.Param("id")
 	basketID, err := uuid.Parse(idStr)
@@ -159,7 +201,6 @@ func (h *BasketHandler) UpdateBasket(c echo.Context) error {
 		log.Printf("Handler: Error binding update basket request for ID %s: %v", basketID, err)
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request body: "+err.Error())
 	}
-
 	// 3. Basic Request Body Validation (Service layer might do more detailed business logic validation)
 	if req.Name == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "Basket name is required")
@@ -173,8 +214,8 @@ func (h *BasketHandler) UpdateBasket(c echo.Context) error {
 
 	// 4. Call the Service
 	ctx := c.Request().Context()
-	log.Printf("Handler: Calling UpdateBasket service for ID %s", basketID)
-	updatedBasket, err := h.service.UpdateBasket(ctx, basketID, req.Name, req.Stocks)
+	log.Printf("Handler: Calling UpdateBasket service for user %s, basket %s", userID, basketID)
+	updatedBasket, err := h.service.UpdateBasket(ctx, basketID, req.Name, req.Stocks, userID)
 	if err != nil {
 		log.Printf("Handler: Error from UpdateBasket service for ID %s: %v", basketID, err)
 		// 5. Handle specific errors
@@ -191,4 +232,14 @@ func (h *BasketHandler) UpdateBasket(c echo.Context) error {
 	// 6. Return Success Response
 	log.Printf("Handler: Successfully updated basket ID %s", basketID)
 	return c.JSON(http.StatusOK, updatedBasket) // Return the updated basket details
+}
+
+// Define validateCreateRequest, validateUpdateRequest helpers if needed
+type createBasketRequest struct {
+	Name   string        `json:"name"`
+	Stocks []model.Stock `json:"stocks"`
+}
+type updateBasketRequest struct {
+	Name   string        `json:"name"`
+	Stocks []model.Stock `json:"stocks"`
 }

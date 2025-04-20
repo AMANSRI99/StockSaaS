@@ -25,7 +25,7 @@ func NewPostgresBasketRepo(db *sql.DB) repository.BasketRepository {
 }
 
 // Save inserts a new basket and its items within a transaction.
-func (r *PostgresBasketRepo) Save(ctx context.Context, basket *model.Basket) error {
+func (r *PostgresBasketRepo) Save(ctx context.Context, basket *model.Basket, userID uuid.UUID) error {
 	// Start a transaction
 	tx, err := r.db.BeginTx(ctx, nil) // Use default transaction options
 	if err != nil {
@@ -42,8 +42,8 @@ func (r *PostgresBasketRepo) Save(ctx context.Context, basket *model.Basket) err
 	}() // Note the final () to call the deferred function
 
 	// 1. Insert into baskets table
-	basketQuery := `INSERT INTO baskets (id, name, created_at, updated_at) VALUES ($1, $2, $3, $4)`
-	_, err = tx.ExecContext(ctx, basketQuery, basket.ID, basket.Name, basket.CreatedAt, basket.CreatedAt) // Use CreatedAt for UpdatedAt initially
+	basketQuery := `INSERT INTO baskets (id, user_id, name, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)`
+	_, err = tx.ExecContext(ctx, basketQuery, basket.ID, userID, basket.Name, basket.CreatedAt, basket.CreatedAt)
 	if err != nil {
 		// Check for potential unique constraint violation or other errors
 		return fmt.Errorf("failed to insert basket: %w", err)
@@ -70,9 +70,9 @@ func (r *PostgresBasketRepo) Save(ctx context.Context, basket *model.Basket) err
 
 // FindAll retrieves all baskets and their associated items.
 // NOTE: This uses a simple N+1 query approach. Optimize later if needed.
-func (r *PostgresBasketRepo) FindAll(ctx context.Context) ([]model.Basket, error) {
-	queryBaskets := `SELECT id, name, created_at, updated_at FROM baskets ORDER BY created_at DESC`
-	rows, err := r.db.QueryContext(ctx, queryBaskets)
+func (r *PostgresBasketRepo) FindAll(ctx context.Context, userID uuid.UUID) ([]model.Basket, error) {
+	queryBaskets := `SELECT id, name, created_at, updated_at FROM baskets WHERE user_id = $1 ORDER BY created_at DESC`
+	rows, err := r.db.QueryContext(ctx, queryBaskets, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query baskets: %w", err)
 	}
@@ -98,9 +98,8 @@ func (r *PostgresBasketRepo) FindAll(ctx context.Context) ([]model.Basket, error
 		return []model.Basket{}, nil // Return empty slice if no baskets found
 	}
 
-	// Now fetch items for all found baskets (This is the N+1 part, one query per basket)
-	// Optimization needed for many baskets (e.g., use JOIN or WHERE basket_id IN (...))
-	queryItems := `SELECT basket_id, symbol, quantity FROM basket_items WHERE basket_id = $1`
+	// Fetch items only for the user's baskets found
+	queryItems := `SELECT basket_id, symbol, quantity FROM basket_items WHERE basket_id = $1` // Still fetch by basket_id
 	for basketID := range basketsMap {
 		itemRows, err := r.db.QueryContext(ctx, queryItems, basketID)
 		if err != nil {
@@ -139,9 +138,9 @@ func (r *PostgresBasketRepo) FindAll(ctx context.Context) ([]model.Basket, error
 
 // FindByID retrieves a single basket and its items.
 // NOTE: Also uses N+1 approach for items.
-func (r *PostgresBasketRepo) FindByID(ctx context.Context, id uuid.UUID) (*model.Basket, error) {
-	queryBasket := `SELECT id, name, created_at, updated_at FROM baskets WHERE id = $1`
-	row := r.db.QueryRowContext(ctx, queryBasket, id)
+func (r *PostgresBasketRepo) FindByID(ctx context.Context, id uuid.UUID, userID uuid.UUID) (*model.Basket, error) {
+	queryBasket := `SELECT id, name, created_at, updated_at FROM baskets WHERE id = $1 AND user_id = $2`
+	row := r.db.QueryRowContext(ctx, queryBasket, id, userID)
 
 	var b model.Basket
 	err := row.Scan(&b.ID, &b.Name, &b.CreatedAt, &b.UpdatedAt)
@@ -149,7 +148,7 @@ func (r *PostgresBasketRepo) FindByID(ctx context.Context, id uuid.UUID) (*model
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, repository.ErrBasketNotFound // Use the custom error
 		}
-		return nil, fmt.Errorf("failed to query or scan basket by ID %s: %w", id, err)
+		return nil, fmt.Errorf("failed to query/scan basket %s for user %s: %w", id, userID, err)
 	}
 
 	// Fetch items for this basket
@@ -177,20 +176,20 @@ func (r *PostgresBasketRepo) FindByID(ctx context.Context, id uuid.UUID) (*model
 
 // DeleteByID removes a basket from the database by its ID.
 // It returns ErrBasketNotFound if no rows are affected.
-func (r *PostgresBasketRepo) DeleteByID(ctx context.Context, id uuid.UUID) error {
-	query := `DELETE FROM baskets WHERE id = $1`
+func (r *PostgresBasketRepo) DeleteByID(ctx context.Context, id uuid.UUID, userID uuid.UUID) error {
+	query := `DELETE FROM baskets WHERE id = $1 AND user_id = $2`
 
-	result, err := r.db.ExecContext(ctx, query, id)
+	result, err := r.db.ExecContext(ctx, query, id, userID)
 	if err != nil {
 		// Handle potential database errors (e.g., connection issues)
-		return fmt.Errorf("failed to execute delete for basket ID %s: %w", id, err)
+		return fmt.Errorf("failed to execute delete for basket %s, user %s: %w", id, userID, err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		// This might happen in rare cases, good to log
 		log.Printf("Warning: could not get rows affected after delete for basket ID %s: %v", id, err)
-		return fmt.Errorf("failed to check rows affected for basket ID %s: %w", id, err)
+		return fmt.Errorf("failed to check rows affected for basket %s, user %s: %w", id, userID, err)
 	}
 
 	if rowsAffected == 0 {
@@ -205,7 +204,7 @@ func (r *PostgresBasketRepo) DeleteByID(ctx context.Context, id uuid.UUID) error
 // Update modifies an existing basket and its items within a transaction.
 // It assumes basket.ID is set and basket contains the new Name and Stocks.
 // Returns ErrBasketNotFound if the basket ID doesn't exist.
-func (r *PostgresBasketRepo) Update(ctx context.Context, basket *model.Basket) (err error) { // Use named return for easier defer rollback
+func (r *PostgresBasketRepo) Update(ctx context.Context, basket *model.Basket, userID uuid.UUID) (err error) { // Use named return for easier defer rollback
 	// Start transaction
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -240,10 +239,10 @@ func (r *PostgresBasketRepo) Update(ctx context.Context, basket *model.Basket) (
 
 	// 1. Update the baskets table (name and updated_at via trigger)
 	// Note: We rely on the DB trigger to update `updated_at`.
-	updateBasketQuery := `UPDATE baskets SET name = $1 WHERE id = $2`
-	result, err := tx.ExecContext(ctx, updateBasketQuery, basket.Name, basket.ID)
+	updateBasketQuery := `UPDATE baskets SET name = $1 WHERE id = $2 AND user_id = $3`
+	result, err := tx.ExecContext(ctx, updateBasketQuery, basket.Name, basket.ID, userID)
 	if err != nil {
-		return fmt.Errorf("failed to update basket %s: %w", basket.ID, err)
+		return fmt.Errorf("failed to update basket %s for user %s: %w", basket.ID, userID, err)
 	}
 	rowsAffected, _ := result.RowsAffected() // Error checking for RowsAffected done previously
 	if rowsAffected == 0 {

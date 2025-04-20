@@ -18,15 +18,15 @@ var ErrBasketNotFound = errors.New("basket not found")
 type BasketRepository interface {
 	// Save creates a new basket or updates an existing one.
 	// For simplicity now, we'll assume it only creates.
-	Save(ctx context.Context, basket *model.Basket) error
+	Save(ctx context.Context, basket *model.Basket, userID uuid.UUID) error
 
 	// FindAll retrieves all baskets.
-	FindAll(ctx context.Context) ([]model.Basket, error)
+	FindAll(ctx context.Context, userID uuid.UUID) ([]model.Basket, error)
 
 	// FindByID retrieves a single basket by its ID.
-	FindByID(ctx context.Context, id uuid.UUID) (*model.Basket, error)
+	FindByID(ctx context.Context, id uuid.UUID, userID uuid.UUID) (*model.Basket, error)
 
-	DeleteByID(ctx context.Context, id uuid.UUID) error
+	DeleteByID(ctx context.Context, id uuid.UUID, userID uuid.UUID) error
 
-	Update(ctx context.Context, basket *model.Basket) error
+	Update(ctx context.Context, basket *model.Basket, userID uuid.UUID) error
 }

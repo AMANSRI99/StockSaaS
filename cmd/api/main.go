@@ -4,6 +4,7 @@ import (
 	// Use your actual module path
 	"net/http"
 
+	kiteAdapter "github.com/AMANSRI99/StockSaaS/internal/adapter/broker/kiteconnect"
 	"github.com/AMANSRI99/StockSaaS/internal/adapter/http/handler"
 	httpMw "github.com/AMANSRI99/StockSaaS/internal/adapter/http/middleware"
 	"github.com/AMANSRI99/StockSaaS/internal/adapter/persistence/postgres"
@@ -39,15 +40,20 @@ func main() {
 
 	// --- Initialize Repositories ---
 	basketRepo := postgres.NewPostgresBasketRepo(db)
-	userRepo := postgres.NewPostgresUserRepo(db) // <-- Instantiate User Repo
+	userRepo := postgres.NewPostgresUserRepo(db)
+	brokerRepo := postgres.NewPostgresBrokerRepo(db, cfg.EncryptionKey)
+	oauthStateRepo := postgres.NewPostgresOAuthStateRepo(db)
 
+	kiteAdpt := kiteAdapter.NewAdapter(cfg.Kite.APIKey)
 	// --- Initialize Services ---
 	basketSvc := service.NewBasketService(basketRepo)
-	userSvc := service.NewUserService(userRepo, *cfg) // <-- Instantiate User Service (pass full config)
+	userSvc := service.NewUserService(userRepo, *cfg)
+	kiteSvc := service.NewKiteService(kiteAdpt, brokerRepo, *cfg)
 
 	// --- Initialize Handlers ---
 	basketHandler := handler.NewBasketHandler(basketSvc) // Pass basket service
 	authHandler := handler.NewAuthHandler(userSvc)       // <-- Instantiate Auth Handler
+	kiteHandler := handler.NewKiteHandler(kiteAdpt, oauthStateRepo, kiteSvc)
 
 	//Initialising auth middleware
 	authMiddleware := httpMw.NewJWTAuthMiddleware(cfg.JWT.SecretKey)
@@ -60,6 +66,15 @@ func main() {
 		{
 			authGroup.POST("/signup", authHandler.Signup) // <-- Register Signup Route
 			authGroup.POST("/login", authHandler.Login)
+		}
+
+		kiteGroup := apiGroup.Group("/kite", authMiddleware) // Group for authenticated kite actions
+		{
+			// Endpoint to start the connection flow
+			kiteGroup.GET("/connect/initiate", kiteHandler.InitiateKiteConnect) // <-- Register Initiate Route
+			// Callback does NOT need user logged in via JWT (comes from external redirect)
+			kiteGroup.GET("/connect/callback", kiteHandler.HandleKiteCallback) // <-- Register Callback Route
+
 		}
 
 		// Basket routes (will add auth middleware later)

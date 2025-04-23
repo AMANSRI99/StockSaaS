@@ -25,11 +25,18 @@ type JWTConfig struct {
 	ExpiryDuration time.Duration // How long the access token is valid
 }
 
+type KiteConfig struct {
+	APIKey    string
+	APISecret string
+}
+
 // AppConfig holds the overall application configuration.
 type AppConfig struct {
 	ServerPort string
 	Database   DBConfig
-	JWT        JWTConfig // Add JWT config
+	JWT        JWTConfig
+	Kite       KiteConfig
+	EncryptionKey []byte
 }
 
 // Load loads configuration from environment variables,
@@ -62,6 +69,27 @@ func Load() (*AppConfig, error) {
 		log.Fatal("FATAL: JWT_SECRET environment variable is not set!")
 	}
 
+	kiteAPIKey := getEnv("KITE_API_KEY", "")
+    kiteAPISecret := getEnv("KITE_API_SECRET", "")
+
+    if kiteAPIKey == "" { log.Fatal("FATAL: KITE_API_KEY environment variable is not set!") }
+    if kiteAPISecret == "" { log.Fatal("FATAL: KITE_API_SECRET environment variable is not set!") }
+
+	 // --- Load Encryption Key ---
+	 encryptionKeyStr := getEnv("ENCRYPTION_KEY", "")
+	 if encryptionKeyStr == "" {
+		 log.Fatal("FATAL: ENCRYPTION_KEY environment variable is not set!")
+	 }
+	 // Ensure the key is the correct length (32 bytes for AES-256)
+    // You might base64 encode the key in the env var for easier handling
+    // For simplicity here, we assume it's a raw 32-byte string
+    encryptionKey := []byte(encryptionKeyStr)
+    if len(encryptionKey) != 32 {
+        log.Fatalf("FATAL: ENCRYPTION_KEY must be 32 bytes long for AES-256, got %d bytes", len(encryptionKey))
+    }
+    // --- End Encryption Key Loading ---
+
+
 	cfg := &AppConfig{
 		ServerPort: getEnv("SERVER_PORT", "8080"),
 		Database: DBConfig{
@@ -76,6 +104,11 @@ func Load() (*AppConfig, error) {
 			SecretKey:      jwtSecret,
 			ExpiryDuration: jwtExpiryDuration,
 		},
+		Kite: KiteConfig{ // Populate Kite config
+            APIKey:    kiteAPIKey,
+            APISecret: kiteAPISecret,
+        },
+		EncryptionKey: encryptionKey,
 	}
 
 	if cfg.Database.User == "" || cfg.Database.DBName == "" {

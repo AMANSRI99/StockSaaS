@@ -42,7 +42,6 @@ func main() {
 	basketRepo := postgres.NewPostgresBasketRepo(db)
 	userRepo := postgres.NewPostgresUserRepo(db)
 	brokerRepo := postgres.NewPostgresBrokerRepo(db, cfg.EncryptionKey)
-	oauthStateRepo := postgres.NewPostgresOAuthStateRepo(db)
 
 	kiteAdpt := kiteAdapter.NewAdapter(cfg.Kite.APIKey)
 	// --- Initialize Services ---
@@ -53,7 +52,7 @@ func main() {
 	// --- Initialize Handlers ---
 	basketHandler := handler.NewBasketHandler(basketSvc) // Pass basket service
 	authHandler := handler.NewAuthHandler(userSvc)       // <-- Instantiate Auth Handler
-	kiteHandler := handler.NewKiteHandler(kiteAdpt, oauthStateRepo, kiteSvc)
+	kiteHandler := handler.NewKiteHandler(kiteAdpt, kiteSvc, *cfg)
 
 	//Initialising auth middleware
 	authMiddleware := httpMw.NewJWTAuthMiddleware(cfg.JWT.SecretKey)
@@ -71,7 +70,7 @@ func main() {
 		kiteGroup := apiGroup.Group("/kite", authMiddleware) // Group for authenticated kite actions
 		{
 			// Endpoint to start the connection flow
-			kiteGroup.GET("/connect/initiate", kiteHandler.InitiateKiteConnect) // <-- Register Initiate Route
+			kiteGroup.GET("/connect/initiate", kiteHandler.InitiateKiteConnect, authMiddleware)
 			// Callback does NOT need user logged in via JWT (comes from external redirect)
 			kiteGroup.GET("/connect/callback", kiteHandler.HandleKiteCallback) // <-- Register Callback Route
 
